@@ -60,9 +60,35 @@ def create_cross_shadow_grid_mask(n_tiles_x=10, n_tiles_y=10):
     mask[:, n_tiles_x // 2 - max(n_tiles_x//10,1) : n_tiles_x //2 + max(n_tiles_x//10,1)] = 1.0  # Vertical line
     return mask
 
+def create_bottom_shadow_grid_mask(n_tiles_x=10, n_tiles_y=10):
+    """
+    Create a grid of tiles with a bottom shadow pattern.
+    
+    Parameters:
+    n_tiles_x (int): Number of tiles in the x direction.
+    n_tiles_y (int): Number of tiles in the y direction.
+    
+    Returns:
+    np.ndarray: A 2D array representing the shadow grid.
+    """
+    mask = np.zeros((n_tiles_y, n_tiles_x), dtype=float)
+    mask[n_tiles_y // 2:, :] = 1.0  # Bottom half shaded
+    return mask
 
-
-
+def create_top_shadow_grid_mask(n_tiles_x=10, n_tiles_y=10):
+    """
+    Create a grid of tiles with a top shadow pattern.
+    
+    Parameters:
+    n_tiles_x (int): Number of tiles in the x direction.
+    n_tiles_y (int): Number of tiles in the y direction.
+    
+    Returns:
+    np.ndarray: A 2D array representing the shadow grid.
+    """
+    mask = np.zeros((n_tiles_y, n_tiles_x), dtype=float)
+    mask[:n_tiles_y // 2, :] = 1.0  # Top half shaded
+    return mask
 
 
 def compute_ray_intersection_with_earth(ray_origin, tile_intercept):
@@ -87,10 +113,9 @@ def compute_ray_intersection_with_earth(ray_origin, tile_intercept):
     return intersection_position
 
 
-def compute_tile_shadow(tile_position, tile_size, scale_factor=(1, 1)):
+def compute_tile_illumination(tile_position, tile_size, scale_factor=(1, 1)):
     """
-    Compute the umbra of a tile based on its position, size, and opacity.
-    The umbra is the region where the tile blocks all sunlight.
+    for a given tile, compute the area of light going through the tile in full illumination and in penumbra
 
     Parameters:
     tile_position (tuple): The (y, z) coordinates of the tile's center.
@@ -113,22 +138,22 @@ def compute_tile_shadow(tile_position, tile_size, scale_factor=(1, 1)):
     tile_bottom_z = tile_position[1] - tile_size / 2
 
     # Calculate the intersection of the ray with the Earth
-    umbra_top_y = max(
+    full_illumination_top_y = max(
         compute_ray_intersection_with_earth(diameter_sun / 2, tile_top_y),
         compute_ray_intersection_with_earth(-diameter_sun / 2, tile_bottom_y),
         )
     
-    umbra_bottom_y = min(
+    full_illumination_bottom_y = min(
         compute_ray_intersection_with_earth(diameter_sun / 2, tile_top_y),
         compute_ray_intersection_with_earth(-diameter_sun / 2, tile_bottom_y)
         )
     
-    umbra_top_z = max(  
+    full_illumination_top_z = max(  
         compute_ray_intersection_with_earth(diameter_sun / 2, tile_top_z),
         compute_ray_intersection_with_earth(-diameter_sun / 2, tile_bottom_z),
         )
     
-    umbra_bottom_z = min(
+    full_illumination_bottom_z = min(
         compute_ray_intersection_with_earth(diameter_sun / 2, tile_top_z),
         compute_ray_intersection_with_earth(-diameter_sun / 2, tile_bottom_z)
         )
@@ -139,10 +164,10 @@ def compute_tile_shadow(tile_position, tile_size, scale_factor=(1, 1)):
     penumbra_bottom_z = compute_ray_intersection_with_earth(-diameter_sun / 2, tile_top_z)
 
     # Scale the coordinates based on the scale factor
-    umbra_top_y *= scale_factor[0]
-    umbra_bottom_y *= scale_factor[0]
-    umbra_top_z *= scale_factor[1]
-    umbra_bottom_z *= scale_factor[1]
+    full_illumination_top_y *= scale_factor[0]
+    full_illumination_bottom_y *= scale_factor[0]
+    full_illumination_top_z *= scale_factor[1]
+    full_illumination_bottom_z *= scale_factor[1]
 
     penumbra_top_y *= scale_factor[0]
     penumbra_bottom_y *= scale_factor[0]
@@ -151,7 +176,7 @@ def compute_tile_shadow(tile_position, tile_size, scale_factor=(1, 1)):
 
     # Return the umbra and penumbra coordinates
     return {
-        "umbra": ((umbra_top_y, umbra_top_z), (umbra_bottom_y, umbra_bottom_z)),
+        "full_illumination": ((full_illumination_top_y, full_illumination_top_z), (full_illumination_bottom_y, full_illumination_bottom_z)),
         "penumbra": ((penumbra_top_y, penumbra_top_z), (penumbra_bottom_y, penumbra_bottom_z))
     }
 
@@ -169,9 +194,9 @@ class DysonTiles:
         self.scale_factor = (figure_pixel_size[0] / diameter_earth, figure_pixel_size[1] / diameter_earth)
 
         
-    def plot_shadow(self, ax=None, opacity_on=0.8):
+    def plot_illumination(self, ax=None, opacity_on=0.8):
         """
-        Plot the shadow of the tiles on a 2D grid.
+        Plot the illumination of the tiles on a 2D grid.
         
         Parameters:
         ax (matplotlib.axes.Axes): The axes to plot on. If None, a new figure and axes are created.
@@ -182,34 +207,32 @@ class DysonTiles:
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
         
-        Umbras = []
-        Penumbras = []
+        Illuminated = []
         for y in range(self.n_tiles_y):
             for z in range(self.n_tiles_z):
+                tile_position = ((self.n_tiles_y//2 - y + 0.5)*self.tile_size, (self.n_tiles_z//2 - z + 0.5)*self.tile_size)
+                areas = compute_tile_illumination(tile_position, self.tile_size, self.scale_factor)
+
+                penumbra = areas["penumbra"]
                 if self.mask[y, z] > 0:
-                    tile_position = ((self.n_tiles_y//2 - y + 0.5)*self.tile_size, (self.n_tiles_z//2 - z + 0.5)*self.tile_size)
-                    shadow = compute_tile_shadow(tile_position, self.tile_size, self.scale_factor)
-                    umbra = shadow["umbra"]
-                    penumbra = shadow["penumbra"]
-
-                    # Plot the penumbra
-                    ax.fill_betweenx([penumbra[0][1], penumbra[1][1]], penumbra[0][0], penumbra[1][0], color='gray', alpha=opacity_on * 0.5, label='Penumbra' if y == 0 and z == 0 else "")
-            
-
-                    Umbras.append(umbra)        
-                    Penumbras.append(penumbra)
-
+                    # Plot the full penumbra area
+                    ax.fill_betweenx([penumbra[0][1], penumbra[1][1]], penumbra[0][0], penumbra[1][0], color='black', alpha=opacity_on * 0.5, label='Penumbra' if y == 0 and z == 0 else "")
                 else:
-                    Umbras.append(-1)
-                    Penumbras.append(-1)
+                    ax.fill_betweenx([penumbra[0][1], penumbra[1][1]], penumbra[0][0], penumbra[1][0], color='black', alpha=0.5, label='Penumbra' if y == 0 and z == 0 else "")
+                full_illumination = areas["full_illumination"]
+                Illuminated.append(full_illumination)
 
         for y in range(self.n_tiles_y):
                 for z in range(self.n_tiles_z):
-                    umbra = Umbras[y * self.n_tiles_z + z]
-
-                    if umbra != -1 and penumbra != -1:
-                        # Plot the umbra
-                        ax.fill_betweenx([umbra[0][1], umbra[1][1]], umbra[0][0], umbra[1][0], color='black', alpha=opacity_on, label='Umbra' if y == 0 and z == 0 else "")
+                    illumination = Illuminated[z * self.n_tiles_z + y]
+                    if self.mask[y, z] > 0:
+                        # Plot the full illumination area
+                        ax.fill_betweenx([illumination[0][1], illumination[1][1]], illumination[0][0], illumination[1][0], color='grey', alpha=opacity_on, label='Full Illumination' if y == 0 and z == 0 else "")
+                    else:
+                        ax.fill_betweenx([illumination[0][1], illumination[1][1]], illumination[0][0], illumination[1][0], color='grey', alpha=0, label='Full Illumination' if y == 0 and z == 0 else "")
+                   
+        
+        
         # Plot the Earth
         earth_circle = plt.Circle((0, 0), diameter_earth * self.scale_factor[0] / 2, color='blue', alpha=0.3, label='Earth')
         ax.add_artist(earth_circle)            
@@ -234,7 +257,7 @@ if __name__ == "__main__":
     dyson_tiles = DysonTiles(mask, shade_size=3000e3, figure_pixel_size=(100, 100))
     
     fig, ax = plt.subplots(figsize=(8, 8))
-    dyson_tiles.plot_shadow(ax=ax,opacity_on=0.8)
+    dyson_tiles.plot_illumination(ax=ax,opacity_on=0.1)
     plt.show()
     # Uncomment the following lines to save the figure
-    # fig.savefig('dyson_tile_shadow.png', dpi=300, bbox_inches='tight')
+    # fig.savefig('dyson_tile_shadow.png', dpi=300, bbox_inches='tighSt')
